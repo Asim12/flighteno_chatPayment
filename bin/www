@@ -1,0 +1,342 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('flighteno:server');
+var http = require('http');
+
+const MongoClient =   require('mongodb').MongoClient;
+const objectId    =   require('mongodb').ObjectId;
+var conn          =   require("../dataBaseConnection/connection");
+var helper        =   require('../helpers/common_helpers');
+const { DH_UNABLE_TO_CHECK_GENERATOR } = require('constants');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+
+ var server = http.createServer(app);
+ const io = require('socket.io')(server,{
+ 
+   cors:{
+     origin:"*",
+    //  methods: ["GET", "POST"]
+   }
+ });
+
+// var server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+  ? 'pipe ' + addr
+  : 'port ' + addr.port;
+  console.log("listeneing on port............"+JSON.stringify(server.address()));
+  console.log('my socket server is running!!!!!!!!!')
+  debug('Listening on ' + bind);
+}
+
+//Whenever someone connects this gets executed  socket
+// const connections = []; 
+// io.on('connection', async function(socket) {
+
+  // socket.on("create",async doc => {
+  //   console.log("create room", doc)
+  //   console.log('socket id ===========>>>>>>>>>>>>>>.',socket.id)
+  //   socket.join(doc.room);
+  //   let withSocket = socket.id
+  //   socket.broadcast.to(withSocket.id).emit("create",{room:doc})
+
+  // });
+
+
+  /////////////////////////////////////////////////////////////////////////
+
+  // socket.on("join",async data => {
+
+  //   console.log(data.username,'is joined the chat!')
+  //   let data = await db.collection('chat').insert( where ,{$set : messageArray } , {upsert : true});
+
+  //   socket.broadcast.emit('join', data.username + 'is joined the chat!')
+  // });
+
+  // socket.on("message", async data => {
+  //   socket.broadcast.emit('message', { 'message' : data.message, 'from' : data.from} )
+  // })
+
+
+  //   socket.on('disconnect', function () {
+  //     console.log('A user disconnected with socket');
+  //     // socket.emit('A user left the chat')
+  //   });
+
+// });
+//end socket
+
+
+
+
+
+
+/////////////////////////////////////////////////////////////
+// let users = [];
+
+const addUser = async (userId, socketId) => {
+  
+  let db = await conn;
+  // !users.some((user) => user.userId === userId) &&
+  // users.push({ userId, socketId });
+
+  let insert = {
+    user_id   :  userId.toString(),
+    socket_id :  socketId
+  }
+
+  let where = {user_id : userId.toString()};
+  db.collection('online_users').updateOne(where, {$set: insert}, {upsert: true}, async(err, result)=>{
+
+    if(err){
+
+    }else{
+      await result;
+      console.log('new user is added!')
+    }
+  })
+
+  // if(countCheck > 0){
+
+  //   console.log('Already Online!')
+  // }else{
+
+  //   db.collection('online_users').insertOne(insert, async(err, accept) => {
+
+  //     if(err){
+  //       console.log(' error')
+  //     }else{
+
+  //       await accept
+  //       console.log('Added in List')
+  //     }
+  //   }) ;
+  // }
+};
+
+const removeUser = async(socketId) => {
+  let db = await conn
+  console.log('send delete user socket id', socketId)
+  db.collection('online_users').deleteOne({socket_id : socketId}, async (err, result) => {
+    if(err){
+
+      console.log('Data Base Error')
+    }else{
+      await result;
+      console.log('user is deleted!!')
+    }
+  })  
+  // users = users.filter((user) => user.socketId !== socketId);
+};
+
+const getUser = async(userId) => {
+  
+  let getUsercheck = {
+
+    user_id   :  userId
+  } 
+  let db = await conn
+  let user = await db.collection('online_users').find(getUsercheck).toArray()
+
+  console.log(user)
+  return user
+
+  // return users.find((user) => user.userId === userId);
+};
+
+
+const getOnlineUserList = async() => {
+  
+  let db    = await conn
+  let users = await db.collection('online_users').find({}).toArray()
+  return users
+}
+
+
+io.on("connection", async(socket) => {
+  //when ceonnect
+  console.log("a user connected.");
+
+  //take userId and socketId from user
+  socket.on("addUser", async (userId) => {
+
+    // console.log('add user is', userId);
+    const user = await getOnlineUserList();   
+    await addUser(userId, socket.id);
+    io.emit("getUsers", user);
+  });
+
+
+  socket.on("sendOffer", async (data) => {
+
+    let db   =  await conn;
+    let chat_id = '';
+    let order_id = data.orderId;
+    let sender_id =  data.senderId
+
+    let createdChat  = {
+
+      order_id      :  data.orderId,
+      sender_id     :  data.senderId,
+      reciver_id    :  data.receiverId,
+      time          :  new Date(),
+    }
+
+    await db.collection('orders').updateOne({ '_id' :  new objectId(order_id.toString()) }, {$push: {offer_sender_account_ids : sender_id}}  );
+
+    let check = {
+
+      order_id      :  data.orderId,
+      sender_id     :  data.senderId,
+      reciver_id    :  data.receiverId,
+    }
+
+    
+    let count = await db.collection('chat').find(check).toArray()
+
+    if(count.length > 0){
+
+      chat_id  = count[0]['_id'].toString()
+      // console.log('Already Connected!')
+    }else{
+
+      let getId =  await db.collection('chat').insertOne(createdChat);
+      chat_id   =  await getId.insertedId
+    }
+
+    io.emit("createChat", chat_id);
+  });
+
+  //send and get message
+  socket.on("sendMessage", async (data) => {
+    const user = await getUser(data.receiverId); 
+
+    let chatId  = data.chat_id;
+    let senderId = data.senderId;
+    let message  = data.text;
+    let sender_status  = data.sender_status;
+
+    let db = await conn;
+    db.collection('chat_messages').insertOne( {sender_id : senderId, "currentMessage" : message , time : new Date(),  chat_id : chatId, is_read: false, sender : sender_status}, async(err, response) => { 
+      if(err){
+
+        console.log('dataBase Error');
+      }else{
+
+        await response;
+        console.log('Inserted')
+      }
+    })
+
+    console.log('message sending', data.text)
+    
+    console.log('Chat Id ==================>>>>>>>>>>>>>>>>>>>>>>>>>>>>>',chatId)
+
+
+    if(sender_status === 'buyer' || sender_status === 'traveler'){
+
+    }else{
+      
+    }
+    
+
+    if(user.length > 0 ){
+
+      console.log('socket id =================>>>>>>>>>>>>>>>>>>>>>>>>>>>>',user[0].socket_id)
+      socket.to(user[0].socket_id).emit("getMessage", {
+        senderId,
+        message,
+        chatId 
+      });
+    }else{
+
+      console.log('this user is not online!');
+    }
+  });
+
+  //when disconnect
+  socket.on("disconnect", async() => {
+    console.log("a user disconnected!");
+    await removeUser(socket.id);
+    const user = await getOnlineUserList();   
+    io.emit("getUsers", user);
+  });
+});
